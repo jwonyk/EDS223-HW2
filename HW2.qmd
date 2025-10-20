@@ -1,0 +1,407 @@
+---
+title: "Homework Assignment 2"
+subtitle: "HOLC Redlining and Biodiversity Observations"
+author: "Jay Kim"
+date: "October 19, 2025"
+code-fold: false
+format: html
+---
+
+# Redlining, Justice, and Biodiversity in LA
+
+This project investigates how historical redlining in Los Angeles to today's enviromental and ecological patterns. We are going to use EPA's EJscreen data, Mapping Inequality Project data, and GBIF Bird Observations data to explore whether neighborhoods that were marked poorly by the HOLC would have any burdens and see the biodiversity sampling as well.
+
+## Initial Setup of the Project
+
+```{r}
+#| message: false
+#| warning: false
+# Load in all the Necessary Packages for upcoming tasks
+rm(list = ls())
+pacman::p_load(tidyverse, sf, stars, ggplot2, tmap, grid, here, viridisLite, dplyr, janitor, knitr, kableExtra)
+```
+
+```{r}
+#| message: false
+#| warning: false
+#| output: False
+# Read in EJScreen data
+# Commented out to save time
+ejscreen <- st_read(here("data",
+                         "ejscreen",
+"EJSCREEN_2023_BG_StatePct_with_AS_CNMI_GU_VI.gdb"),
+                    quiet = TRUE)
+
+# Read in HOLC Redlining Data
+# Commented out to save time
+birds <- st_read(here("data",
+                      "gbif-birds-LA",
+                      "gbif-birds-LA.shp"),
+                 quiet = TRUE)
+
+# Read in HOLC Redlining Data
+# Commented out to save time
+map_inequal <- st_read(here("data",
+                            "mapping-inequality",
+                            "mapping-inequality-los-angeles.json"),
+                       quiet = TRUE)
+```
+
+```{r}
+# Create a system that tells us the warning about Coordinate system
+if(st_crs(ejscreen)$epsg != 3310 |
+   st_crs(map_inequal)$epsg != 3310 |
+   st_crs(birds)$epsg != 3310) {
+  
+  warning("One or more datasets are not EPSG: 3310. Please st_transform().")
+
+} else {
+  
+  message("We are all good to go! Enjoy mapping!")
+
+}
+
+# Check if HOLC grade column exists and if not, abort the program.
+if(!"grade" %in% names(map_inequal)) {
+  
+  stop("HOLC data is missing the 'grade' column. Exit!")
+
+} else {
+  
+  message("Again, good to go!")
+  
+}
+```
+
+```{r}
+#| message: false
+#| warning: false
+# Check the data type
+st_layers(here::here("data", 
+                       "ejscreen",
+                       "EJSCREEN_2023_BG_StatePct_with_AS_CNMI_GU_VI.gdb"))
+
+# Confirm EPSG Number (Coordinate System) 
+st_crs(ejscreen)
+st_crs(map_inequal)
+st_crs(birds)
+
+# Let's make sure it is in EPGS 3310 for Consistency
+# California Albers - EPSG 3310
+
+ejscreen <- st_transform(ejscreen, 3310)
+birds <- st_transform(birds, 3310)
+map_inequal <- st_transform(map_inequal, 3310)
+```
+
+```{r}
+#| message: false
+#| warning: false
+# We will subsetting dataset to LA by using `st_crop()`
+# Using Map Inequality Project as a parameter 
+ejs_LA <- st_crop(ejscreen, st_bbox(map_inequal))
+
+# Let's save the subset for future use
+st_write(ejs_LA, here("data",
+                           "ejscreen",
+                           "EJSCREEN_LA.gpkg"),
+         quiet = TRUE)
+```
+
+```{r}
+#| message: false
+#| warning: false
+# Read in subsetted LA
+ejscreen_LA <- st_read(here("data", 
+                       "ejscreen",
+                       "EJSCREEN_LA.gpkg"),
+                  quiet = TRUE) %>% 
+  clean_names()
+```
+
+## Part 1 - Environmental Justice
+
+### Initial Map
+
+```{r}
+#| message: false
+#| warning: false
+# Quick plotting to check the map
+tmap_mode("plot")
+
+tm_shape(ejscreen_LA) +
+  tm_borders(col = "grey", lwd = 0.2) + # Line width thinner
+tm_shape(map_inequal) +
+  tm_borders(col = "red", lwd = 1) + # Line width thicker
+  tm_title("EJScreen Blocks (Grey) and HOLC Redlining Areas (Red)")
+```
+
+### Create a Map of Historical Redlining Neighborhoods
+
+```{r}
+#| message: false
+#| warning: false
+# Plot the map! Always make make sure to put static plotting mode
+tmap_mode("plot")
+
+# We are going to fill the map with colors by HOLC Grade
+tm_shape(map_inequal) +
+  tm_fill("grade",
+          fill.legend = tm_legend(title = "HOLC Grade"),
+          palette = c("A" = "red",
+                      "B" = "blue",
+                      "C" = "yellow",
+                      "D" = "green")) +
+  tm_borders(col = "black", lwd = 0.2) +
+tm_shape(ejscreen_LA) +
+  tm_borders(col = "grey", lwd = 0.1) +
+  tm_scalebar(position = c("left", "bottom")) +
+  tm_compass(type = "arrow", 
+             position = c("right", "top")) +
+  tm_title("Historical HOLC Redlining Grade in LA")
+```
+
+### Summarizing Table
+
+```{r}
+#| message: false
+#| warning: false
+# Initialize new block group with centroids 
+# Spatially Join with HOLC grades 
+# Look for HOLC Polygon in `map_inequal`
+# Remove the geometry column to use as data frame
+ejscreen_LA_cent <- st_point_on_surface(ejscreen_LA)
+ejscreen_holc <- ejscreen_LA_cent %>% 
+  st_join(map_inequal["grade"],
+          join = st_within) %>%
+  st_drop_geometry()
+```
+
+```{r}
+#| message: false
+#| warning: false
+# Create Summary table
+# Which has percentage of block groups per HOLC grade
+ejscreen_summary_table <- ejscreen_holc %>% 
+  mutate(grade = if_else(is.na(grade), 
+                         "None", 
+                         grade)) %>% # Census black group X within HOLC grade
+  count(grade, name = "num_block_grps") %>% 
+  mutate(percent = round(100 * num_block_grps / sum(num_block_grps), 1)) %>%
+  arrange(factor(grade, levels = c("A", "B", "C", "D")))
+
+# Use `kableExtra` package to make presentable table
+ejscreen_summary_table %>% 
+  kbl(col.names = c("HOLC Grade", 
+                    "Number of Block Groups", 
+                    "Percent of Total"),
+      caption = "Distribution of Cencus Block Groups by HOLC Grade in LA",
+      align = "c") %>% 
+  kable_styling(full_width = FALSE,
+                bootstrap_options = c("striped", 
+                                      "hover", 
+                                      "condensed"),
+                position = "center") %>% 
+  column_spec(3, color = "white", background = "dodgerblue")
+```
+
+### Data Visualization
+
+```{r}
+#| message: false
+#| warning: false
+# Subset and calculate means of HOLC grade for a visualization
+# Drop the geometry to make sure to run smoothly
+# We will use 'lowincpct' - % low income
+# 'p_lifeexppct' - percentile for low life expectancy
+# 'p_pm25' - percentile for Particulate Matter 2.5
+ejscreen_mean <- ejscreen_LA %>% 
+  st_drop_geometry() %>% 
+  mutate(grade = ejscreen_holc$grade) %>% 
+  filter(!is.na(grade)) %>% 
+  group_by(grade) %>% 
+  summarize(avg_low_income = mean(lowincpct, na.rm = TRUE),
+            avg_life_exp = mean(p_lifeexppct, na.rm = TRUE),
+            avg_pm25 = mean(p_pm25, na.rm = TRUE))
+```
+
+```{r}
+#| message: false
+#| warning: false
+# Plot first visualization - % low income by HOLC grade
+ggplot(ejscreen_mean, aes(x = grade, y = avg_low_income, fill = grade)) +
+  geom_col() +
+  labs(title = "Average % Low Income by HOLC Grade",
+       x = "HOLC Grade",
+       y = "Average % Low Income",
+       fill = "HOLC Grade \nCatagory") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title.align = 0.5)
+```
+
+```{r}
+#| message: false
+#| warning: false
+# Plot second visualization - percentile for low life expectancy
+ggplot(ejscreen_mean, aes(x = grade, y = avg_life_exp, fill = grade)) +
+  geom_col() +
+  labs(title = "Average Percentile for Life Expectancy by HOLC Grade",
+       x = "HOLC Grade",
+       y = "Average Percentile for Life Expectancy",
+       fill = "HOLC Grade \nCatagory") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title.align = 0.5)
+```
+
+```{r}
+#| message: false
+#| warning: false
+# Plot third visualization - percentile for Particulate Matter 2.5
+ggplot(ejscreen_mean, aes(x = grade, y = avg_pm25, fill = grade)) +
+  geom_col() +
+  labs(title = "Average Percentile for Particulate Matter 2.5 by HOLC Grade",
+       x = "HOLC Grade",
+       y = "Average Percentile for Particulate Matter 2.5",
+       fill = "HOLC Grade \nCatagory") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title.align = 0.5)
+```
+
+```{r}
+#| message: false
+#| warning: false
+# Plot fourth visualization - Use `facet_wrap()` to put all three together. 
+ejscreen_long <- ejscreen_mean %>% 
+  pivot_longer(cols = starts_with("avg_"),
+               names_to = "measure",
+               values_to = "value")
+
+ggplot(ejscreen_long, aes(x = grade, y = value, fill = grade)) +
+  geom_col() +
+  facet_wrap(~ measure, scales = "free_y") + # 
+  labs(title = "Environmental & Socioeconomic Status by HOLC Grade",
+       x = "HOLC Grade",
+       y = "Mean",
+       fill = "HOLC Grade \nCatagory") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title.align = 0.5)
+```
+
+### Reflection
+
+a.  Low Income
+
+    -   We found that there is increasing trend of A to D and D areas have highest proportion of low-income residents and A. The redlining patterns indicate the economic disadvantages.
+
+b.  Life Expectancy
+
+    -   We found that there is increasing trend of A to D of lower life expectancy. The historically red-lined areas have lower life expectancy (C - D) than others (A - B). Long-term health disadvantages are shown.
+
+c.  $PM_2._5$ Pollution
+
+    -   Same as other data points, there is increasing trend of air pollution from A to D. Residents of C and D areas are more likely to be exposed to higher air pollution. The environmental burden and low socioeconomic shows likely connection to each other.
+
+It is evident that historically worse neighborhood according to HOLC grade, the poorer outcome shows in socioeconomically and environmentally.
+
+## Part 2 - Biodiversity
+
+### Legacy of Historical Redlining in LA of Bird Observation
+
+```{r}
+#| message: false
+#| warning: false
+# Once again, make sure CRS matches
+# Both data needs to match EPSG 3310
+st_crs(birds)
+st_crs(map_inequal)
+
+# Check how far the Bird data goes back 
+# Make sure it goes back to 2023
+birds %>% 
+  arrange(desc(year)) %>% 
+  head()
+```
+
+```{r}
+#| message: false
+#| warning: false
+# Filter the Bird data from 2021 to the earliest (2023)
+birds_current <- birds %>% 
+  filter(year >= 2021)
+
+# Spatially join the bird record to HOLC grade
+# Make sure to drop geometry to calculate smoothly
+birds_holc <- birds_current %>% 
+  st_join(map_inequal["grade"],
+          join = st_within) %>% 
+  st_drop_geometry()
+```
+
+```{r}
+#| message: false
+#| warning: false
+# Create Summary table
+# Add birds outside of HOLC grade
+birds_summary_table <- birds_holc %>% 
+  mutate(grade = if_else(is.na(grade), 
+                         "None", 
+                         grade)) %>%
+  count(grade, name = "num_obs") %>% 
+  mutate(percent = round(100 * num_obs / sum(num_obs), 1)) %>%
+  arrange(factor(grade, levels = c("A", "B", "C", "D")))
+
+# Use `kableExtra` package to make presentable table
+birds_summary_table %>% 
+  kbl(col.names = c("HOLC Grade", 
+                    "Number of Observation", 
+                    "Percent of Total"),
+      caption = "Percentage of Bird Observations within HOLC Grades (2021–2023)",
+      align = "c") %>% 
+  kable_styling(full_width = FALSE,
+                bootstrap_options = c("striped", 
+                                      "hover", 
+                                      "condensed"),
+                position = "center") %>% 
+  column_spec(3, color = "white", background = "dodgerblue")
+```
+
+### With the `None`
+
+```{r}
+#| message: false
+#| warning: false
+# Create data visualization using the bar graph
+ggplot(birds_summary_table, 
+       aes(x = grade, y = percent, fill = grade)) +
+  geom_col() +
+  labs(title = "Percentage of Bird Observations within HOLC Grades (2021–2023)",
+       x = "HOLC Grade",
+       y = "Percent of Observation",
+       fill = "HOLC Grade \nCatagory") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title.align = 0.5)
+```
+
+### Without the `None`
+
+```{r}
+#| message: false
+#| warning: false
+# Create data visualization using the bar graph
+# Removed "None" Catagory to better distinguish A to D area
+ggplot(birds_summary_table %>% filter(grade != "None"), 
+       aes(x = grade, y = percent, fill = grade)) +
+  geom_col() +
+  labs(title = "Percentage of Bird Observations within HOLC Grades (2021–2023)",
+       x = "HOLC Grade",
+       y = "Percent of Observation",
+       fill = "HOLC Grade \nCatagory") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title.align = 0.5)
+```
+
+### Reflection
+
+Q: Why might we have obtained different results in our analysis? What did the paper consider that we did not?
+
+Our analysis of bird observations in LA between 2021 and 2023 shows that the bird data are uneven throughout the HOLC grade areas. The most significant difference from the Ellis-Soto et al. (2023) and our data is that our focus was only on the LA. In contrast, the paper investigated 195 cities with respect to a population greater than 30 million people in the USA. Their finding is that desirable, A and B areas, of metropolitan cities have more than twice the density of regions red-lined as "hazardous" areas. Our analysis differs from the start, as the paper uses a decade-long time period, whereas we are only focusing on a shorter time frame. Our sample could be biased for different reasons due to the limited data compared to the paper.
