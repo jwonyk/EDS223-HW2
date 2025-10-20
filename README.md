@@ -12,6 +12,25 @@ This project explores how historical redlining practices, a discriminatory neigh
 
 ## Repository Structure
 
+``` bash
+.
+├── data
+│   ├── ejscreen
+│   │   ├── EJSCREEN_2023_BG_StatePct_with_AS_CNMI_GU_VI.gdb
+│   │   ├── EJSCREEN_LA.gpkg
+│   ├── gbif-birds-LA
+│   │   ├── gbif-birds-LA.dbf
+│   │   ├── gbif-birds-LA.prj
+│   │   ├── gbif-birds-LA.shp
+│   │   └── gbif-birds-LA.shx
+│   └── mapping-inequality
+│       └── mapping-inequality-los-angeles.json
+├── EDS223-HW2.Rproj
+├── HW2.html
+├── HW2.qmd
+└── README.md
+```
+
 ## Data
 
 The project uses following data:
